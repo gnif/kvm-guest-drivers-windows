@@ -11,7 +11,12 @@ typedef struct IVSHMEMDeviceRegisters
     volatile ULONG irqStatus;
     volatile LONG  ivProvision;
     volatile ULONG doorbell;
-    volatile UCHAR reserved[240];
+    volatile ULONG memAliasAddrL;
+    volatile ULONG memAliasAddrU;
+    volatile ULONG memAliasOffset;
+    volatile ULONG memAliasSize;
+    volatile ULONG memAliasEn;
+    volatile UCHAR reserved[220];
 }
 IVSHMEMDeviceRegisters, *PIVSHMEMDeviceRegisters;
 #pragma align(pop)

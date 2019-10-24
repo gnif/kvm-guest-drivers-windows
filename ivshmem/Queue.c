@@ -14,6 +14,14 @@ typedef struct IVSHMEM_MMAP32
     UINT16         vectors; // the number of vectors available
 }
 IVSHMEM_MMAP32, *PIVSHMEM_MMAP32;
+
+typedef struct IVSHMEM_MEMALIAS32
+{
+    UINT32 target; // the target address to alias over
+    UINT32 offset; // start offset of the shared memory region
+    UINT32 size;   // the size of the shared memory region to alias
+}
+IVSHMEM_MEMALIAS32, *PIVSHMEM_MEMALIAS32;
 #endif
 
 // Forwards
@@ -58,6 +66,20 @@ static NTSTATUS ioctl_register_event(
     const WDFREQUEST      Request,
     size_t              * BytesReturned
 );
+
+static NTSTATUS ioctl_request_memalias(
+    const PDEVICE_CONTEXT DeviceContext,
+    const size_t          InputBufferLength,
+    const WDFREQUEST      Request,
+    size_t              * BytesReturned
+);
+
+static NTSTATUS ioctl_release_memalias(
+    const PDEVICE_CONTEXT DeviceContext,
+    const WDFREQUEST      Request,
+    size_t              * BytesReturned
+);
+
 
 NTSTATUS IVSHMEMQueueInitialize(_In_ WDFDEVICE Device)
 {
@@ -121,6 +143,14 @@ IVSHMEMEvtIoDeviceControl(
 
         case IOCTL_IVSHMEM_REGISTER_EVENT:
             status = ioctl_register_event(deviceContext, InputBufferLength, Request, &bytesReturned);
+            break;
+
+        case IOCTL_IVSHMEM_REQUEST_MEMALIAS:
+            status = ioctl_request_memalias(deviceContext, InputBufferLength, Request, &bytesReturned);
+            break;
+
+        case IOCTL_IVSHMEM_RELEASE_MEMALIAS:
+            status = ioctl_release_memalias(deviceContext, Request, &bytesReturned);
             break;
     }
 
@@ -490,6 +520,133 @@ static NTSTATUS ioctl_register_event(
     }
     KeReleaseSpinLock(&DeviceContext->eventListLock, oldIRQL);
   
+    *BytesReturned = 0;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS ioctl_request_memalias(
+    const PDEVICE_CONTEXT DeviceContext,
+    const size_t          InputBufferLength,
+    const WDFREQUEST      Request,
+    size_t              * BytesReturned
+)
+{
+    // ensure the mapping exists
+    if (!DeviceContext->shmemMap)
+    {
+        DEBUG_ERROR("%s", "IOCTL_IVSHMEM_REQUEST_MEMALIAS: not mapped");
+        return STATUS_INVALID_DEVICE_REQUEST;
+    }
+
+    // ensure someone else other then the owner isn't attempting to manipulate things
+    if (DeviceContext->owner != WdfRequestGetFileObject(Request))
+    {
+        DEBUG_ERROR("%s", "IOCTL_IVSHMEM_REQUEST_MEMALIAS: Invalid owner");
+        return STATUS_INVALID_HANDLE;
+    }
+
+#ifdef _WIN64
+    PIRP  irp = WdfRequestWdmGetIrp(Request);
+    const BOOLEAN is32Bit = IoIs32bitProcess(irp);
+    const size_t  bufferLen = is32Bit ? sizeof(IVSHMEM_MEMALIAS32) : sizeof(IVSHMEM_MEMALIAS);
+#else
+    const size_t  bufferLen = sizeof(IVSHMEM_MEMALIAS);
+#endif
+    PVOID buffer;
+
+    if (InputBufferLength != bufferLen)
+    {
+        DEBUG_ERROR("IOCTL_IVSHMEM_REQUEST_MEMALIAS: Invalid size, expected %u but got %u", bufferLen, InputBufferLength);
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+
+    if (!NT_SUCCESS(WdfRequestRetrieveInputBuffer(Request, bufferLen, (PVOID *)&buffer, NULL)))
+    {
+        DEBUG_ERROR("%s", "IOCTL_IVSHMEM_REQUEST_MEMALIAS: Failed to retrieve the input buffer");
+        return STATUS_INVALID_USER_BUFFER;
+    }
+
+    PHYSICAL_ADDRESS target;
+    UINT32 offset;
+    UINT32 size;
+
+#ifdef _WIN64
+    if (is32Bit)
+    {
+        PIVSHMEM_MEMALIAS32 in = (PIVSHMEM_MEMALIAS32)buffer;
+        target = MmGetPhysicalAddress((PVOID)in->target);
+        offset = in->offset;
+        size = in->size;
+    }
+    else
+#endif
+    {
+        PIVSHMEM_MEMALIAS in = (PIVSHMEM_MEMALIAS)buffer;
+        target = MmGetPhysicalAddress(in->target);
+        offset = in->offset;
+        size = in->size;
+    }
+
+    if (DeviceContext->devRegisters->memAliasEn != 0)
+    {
+        DEBUG_ERROR("%s", "IOCTL_IVSHMEM_REQUEST_MEMALIAS: already active");
+        return STATUS_INVALID_DEVICE_REQUEST;
+    }
+
+    DeviceContext->devRegisters->memAliasAddrL  = target.LowPart;
+    DeviceContext->devRegisters->memAliasAddrU  = target.HighPart;
+    DeviceContext->devRegisters->memAliasOffset = offset;
+    DeviceContext->devRegisters->memAliasSize   = size;
+    DeviceContext->devRegisters->memAliasEn        = 0x1;
+
+    if (DeviceContext->devRegisters->memAliasEn != 0x1)
+    {
+        DEBUG_ERROR("%s", "IOCTL_IVSHMEM_REQUEST_MEMALIAS: refused by device");
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    *BytesReturned = 0;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS ioctl_release_memalias(
+    const PDEVICE_CONTEXT DeviceContext,
+    const WDFREQUEST      Request,
+    size_t              * BytesReturned
+)
+{
+    // ensure the mapping exists
+    if (!DeviceContext->shmemMap)
+    {
+        DEBUG_ERROR("%s", "IOCTL_IVSHMEM_RELEASE_MEMALIAS: not mapped");
+        return STATUS_INVALID_DEVICE_REQUEST;
+    }
+
+    // ensure someone else other then the owner isn't attempting to manipulate things
+    if (DeviceContext->owner != WdfRequestGetFileObject(Request))
+    {
+        DEBUG_ERROR("%s", "IOCTL_IVSHMEM_RELEASE_MEMALIAS: Invalid owner");
+        return STATUS_INVALID_HANDLE;
+    }
+
+    if (DeviceContext->devRegisters->memAliasEn == 0x0)
+    {
+        DEBUG_ERROR("%s", "IOCTL_IVSHMEM_RELEASE_MEMALIAS: not active");
+        return STATUS_INVALID_DEVICE_REQUEST;
+    }
+
+    DeviceContext->devRegisters->memAliasEn     = 0x0;
+    DeviceContext->devRegisters->memAliasAddrL  = 0x0;
+    DeviceContext->devRegisters->memAliasAddrU  = 0x0;
+    DeviceContext->devRegisters->memAliasOffset = 0x0;
+    DeviceContext->devRegisters->memAliasSize   = 0x0;
+
+    if (DeviceContext->devRegisters->memAliasEn != 0x0)
+    {
+        DEBUG_ERROR("%s", "IOCTL_IVSHMEM_RELEASE_MEMALIAS: unknown hardware error");
+        return STATUS_DEVICE_HARDWARE_ERROR;
+    }
+
     *BytesReturned = 0;
     return STATUS_SUCCESS;
 }

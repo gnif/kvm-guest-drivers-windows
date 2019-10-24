@@ -182,6 +182,45 @@ int main()
         }
         TEST_PASS();
 
+        TEST_START("Test memory alias");
+        {
+            UINT8 *overlay = (UINT8*)VirtualAlloc(NULL, 8192, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+            if (!overlay)
+            {
+                TEST_FAIL("Failed to allocate physical ram for test");
+                break;
+            }
+
+            /* init the ram to a known value */
+            memset(map.ptr, 0xAA, (size_t)map.size);
+            memset(overlay, 0xCC, 8192);
+
+            /* alias only half of the ram */
+            IVSHMEM_MEMALIAS alias;
+            alias.target = overlay;
+            alias.offset = 0;
+            alias.size   = 4096;
+            if (!DeviceIoControl(devHandle, IOCTL_IVSHMEM_REQUEST_MEMALIAS, &alias, sizeof(IVSHMEM_MEMALIAS), NULL, 0, &ulReturnedLength, NULL))
+            {
+                TEST_FAIL("Failed to request memory alias");
+                VirtualFree(overlay, 8192, MEM_RELEASE);
+                break;
+            }
+
+            printf("\n");
+            for (int i = 4090; i < 4100; ++i)
+                printf("%d = %x\n", i, overlay[i]);
+
+            if (!DeviceIoControl(devHandle, IOCTL_IVSHMEM_RELEASE_MEMALIAS, NULL, 0, NULL, 0, &ulReturnedLength, NULL))
+            {
+                TEST_FAIL("Failed to release the memory alias");
+                VirtualFree(overlay, 8192, MEM_RELEASE);
+                break;
+            }
+            VirtualFree(overlay, 8192, MEM_RELEASE);
+        }
+        TEST_PASS();
+
         TEST_START("Shared memory actually works");
         memset(map.ptr, 0xAA, (size_t)map.size);
         CloseHandle(devHandle);
