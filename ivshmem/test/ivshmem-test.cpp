@@ -101,9 +101,12 @@ int main()
 		printf("Size: %I64u\n", size);
 
 		TEST_START("IOCTL_IVSHMEM_REQUEST_MMAP");
+		IVSHMEM_MMAP_CONFIG conf;
 		IVSHMEM_MMAP map;
+
+		conf.cacheMode = IVSHMEM_CACHE_NONCACHED;
 		ZeroMemory(&map, sizeof(IVSHMEM_MMAP));
-		if (!DeviceIoControl(devHandle, IOCTL_IVSHMEM_REQUEST_MMAP, NULL, 0, &map, sizeof(IVSHMEM_MMAP), &ulReturnedLength, NULL))
+		if (!DeviceIoControl(devHandle, IOCTL_IVSHMEM_REQUEST_MMAP, &conf, sizeof(IVSHMEM_MMAP_CONFIG), &map, sizeof(IVSHMEM_MMAP), &ulReturnedLength, NULL))
 		{
 			TEST_FAIL("DeviceIoControl");
 			break;
@@ -123,7 +126,7 @@ int main()
 		TEST_PASS();
 
 		TEST_START("Mapping more then once fails");
-		if (DeviceIoControl(devHandle, IOCTL_IVSHMEM_REQUEST_MMAP, NULL, 0, &map, sizeof(IVSHMEM_MMAP), &ulReturnedLength, NULL))
+		if (DeviceIoControl(devHandle, IOCTL_IVSHMEM_REQUEST_MMAP, &conf, sizeof(IVSHMEM_MMAP_CONFIG), &map, sizeof(IVSHMEM_MMAP), &ulReturnedLength, NULL))
 		{
 			TEST_FAIL("mapping succeeded, this should not happen!");
 			break;
@@ -137,7 +140,7 @@ int main()
 			TEST_FAIL("Failed to open second handle");
 			break;
 		}
-		if (DeviceIoControl(devHandle, IOCTL_IVSHMEM_REQUEST_MMAP, NULL, 0, &map, sizeof(IVSHMEM_MMAP), &ulReturnedLength, NULL))
+		if (DeviceIoControl(devHandle, IOCTL_IVSHMEM_REQUEST_MMAP, &conf, sizeof(IVSHMEM_MMAP_CONFIG), &map, sizeof(IVSHMEM_MMAP), &ulReturnedLength, NULL))
 		{
 			TEST_FAIL("mapping succeeded, this should not happen!");
 			break;
@@ -172,7 +175,7 @@ int main()
 			TEST_FAIL("Failed to re-open handle");
 			break;
 		}
-		if (!DeviceIoControl(devHandle, IOCTL_IVSHMEM_REQUEST_MMAP, NULL, 0, &map, sizeof(IVSHMEM_MMAP), &ulReturnedLength, NULL))
+		if (!DeviceIoControl(devHandle, IOCTL_IVSHMEM_REQUEST_MMAP, &conf, sizeof(IVSHMEM_MMAP_CONFIG), &map, sizeof(IVSHMEM_MMAP), &ulReturnedLength, NULL))
 		{
 			TEST_FAIL("Mapping failed!");
 			break;
@@ -188,7 +191,7 @@ int main()
 			TEST_FAIL("Failed to re-open handle");
 			break;
 		}
-		if (!DeviceIoControl(devHandle, IOCTL_IVSHMEM_REQUEST_MMAP, NULL, 0, &map, sizeof(IVSHMEM_MMAP), &ulReturnedLength, NULL))
+		if (!DeviceIoControl(devHandle, IOCTL_IVSHMEM_REQUEST_MMAP, &conf, sizeof(IVSHMEM_MMAP_CONFIG), &map, sizeof(IVSHMEM_MMAP), &ulReturnedLength, NULL))
 		{
 			TEST_FAIL("Mapping failed!");
 			break;
